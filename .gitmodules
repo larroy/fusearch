@@ -1,0 +1,3 @@
+[submodule "3rdparty/textract"]
+	path = 3rdparty/textract
+	url = git@github.com:larroy/textract.git

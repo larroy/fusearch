@@ -9,6 +9,11 @@ import sys
 import logging
 import time
 import yaml
+import textract
+import filetype
+import functools
+import nltk
+from collections import namedtuple
 
 
 def script_name() -> str:
@@ -84,6 +89,7 @@ def daemonize() -> None:
     redirect_stream(sys.stderr, open('/tmp/fusearch.err', 'a'))
     fusearch_main()
 
+
 # FIXME lockfile
 
 
@@ -93,9 +99,15 @@ class Config(object):
 
     @staticmethod
     def from_file(conf_file):
+        assert os.path.isfile(conf_file)
         with open(conf_file, 'r') as fd:
             cfg = yaml.safe_load(fd.read())
-        return Config(cfg)
+        if cfg:
+            return Config(**cfg)
+        return Config()
+
+    def __str__(self):
+        return self.__class__.__name__ + '(' + str(self.__dict__) + ')'
 
 
 def config_argparse() -> argparse.ArgumentParser:
@@ -108,10 +120,72 @@ def config_argparse() -> argparse.ArgumentParser:
     return parser
 
 
-def fusearch_main() -> int:
-    while True:
-        print('hi')
-        time.sleep(1)
+def file_extension(filepath) -> str:
+    _, ext_ = os.path.splitext(filepath)
+    ext = ext_.lower()
+    return ext
+
+
+def filetype_admissible(include_extensions, file):
+    ext = file_extension(file)
+    if ext in include_extensions:
+        return True
+    else:
+        guess = filetype.guess(file)
+        if guess and guess.extension in include_extensions:
+            return True
+    return False
+
+
+def filename_without_extension(file):
+    _, fname = os.path.split(file)
+    base, _ = os.path.splitext(fname)
+    return base
+
+
+def file_generator(path):
+    for (dirpath, dirnames, files) in os.walk(path):
+        for file in files:
+            yield os.path.abspath(os.path.join(dirpath, file))
+
+
+def to_text(file) -> None:
+    try:
+        txt = textract.process(file)
+        print(len(txt))
+        print(txt[:80])
+    except RuntimeError as e:
+        txt = ''
+        logging.error("Exception while extracting text from '%s'", file)
+    return txt
+
+
+TokenizedFile = namedtuple('TokenizedFile', ['filename', 'content'])
+def text_extraction(file) -> TokenizedFile:
+    txt = to_text(file)
+    base = filename_without_extension(file)
+    return TokenizedFile(base, txt)
+
+
+def index(path, include_extensions) -> None:
+    if not os.path.isdir(path):
+        logging.error("Not a directory: '%s', skipping indexing", path)
+        return
+    desired_filetype = functools.partial(filetype_admissible, include_extensions)
+    for file in filter(desired_filetype, file_generator(path)):
+        tokenized_file = text_extraction(file)
+        print(tokenized_file)
+
+
+def fusearch_main(args) -> int:
+    logging.info("reading config from %s", args.config)
+    config = Config.from_file(args.config)
+    logging.info("%s", config)
+    # print(index_file('/Users/pllarroy/docu/books/edward_tufte_the_visual_display_of_quantitative_information_second_edition_2001.pdf'))
+    # index_file('/Users/pllarroy/docu/arts_design/Colour Management - A Comprehensive Guide For Graphic Designers - 150Dpi.pdf')
+    # return
+    for path in config.index_dirs:
+        index(path, set(config.include_extensions))
 
 
 def main() -> int:
@@ -120,7 +194,7 @@ def main() -> int:
     args = parser.parse_args()
     if not args.foreground:
         return daemonize()
-    fusearch_main()
+    fusearch_main(args)
 
 
 if __name__ == '__main__':
