@@ -12,7 +12,6 @@ import yaml
 import textract
 import filetype
 import functools
-import nltk
 from collections import namedtuple
 
 
@@ -160,11 +159,11 @@ def to_text(file) -> None:
     return txt
 
 
-TokenizedFile = namedtuple('TokenizedFile', ['filename', 'content'])
-def text_extraction(file) -> TokenizedFile:
+Document = namedtuple('Document', ['path', 'filename', 'content'])
+def text_extraction(file) -> Document:
     txt = to_text(file)
     base = filename_without_extension(file)
-    return TokenizedFile(base, txt)
+    return Document(file, base, txt)
 
 
 def index(path, include_extensions) -> None:
@@ -172,9 +171,9 @@ def index(path, include_extensions) -> None:
         logging.error("Not a directory: '%s', skipping indexing", path)
         return
     desired_filetype = functools.partial(filetype_admissible, include_extensions)
+    index = Index({'provider':'sqlite', 'filename':'fusearch.db', 'create_db': True})
     for file in filter(desired_filetype, file_generator(path)):
-        tokenized_file = text_extraction(file)
-        print(tokenized_file)
+        document = text_extraction(file)
 
 
 def fusearch_main(args) -> int:
