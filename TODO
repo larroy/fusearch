@@ -1,0 +1,2 @@
+- Language detection to select the stemming algorithm
+- Verify TFIDF combination on queries

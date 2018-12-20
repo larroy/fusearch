@@ -7,12 +7,13 @@ import os
 import signal
 import sys
 import logging
-import time
 import yaml
 import textract
 import filetype
 import functools
-from collections import namedtuple
+from fusearch.index import Index
+from fusearch.model import Document
+from fusearch.nltk_tokenizer import NLTKTokenizer
 
 
 def script_name() -> str:
@@ -24,7 +25,7 @@ def config_logging() -> None:
     import time
     logging.getLogger().setLevel(logging.INFO)
     logging.getLogger("requests").setLevel(logging.WARNING)
-    logging.basicConfig(format='{}: %(asctime)sZ %(levelname)s %(message)s'.
+    logging.basicConfig(format='{}: %(asctime)sZ %(name)s %(levelname)s %(message)s'.
                         format(script_name()))
     logging.Formatter.converter = time.gmtime
 
@@ -150,20 +151,24 @@ def file_generator(path):
 
 def to_text(file) -> None:
     try:
-        txt = textract.process(file)
+        txt_b = textract.process(file, method='pdftotext')
+        # TODO more intelligent decoding? there be dragons
+        txt = txt_b.decode('utf-8')
+        print(file)
         print(len(txt))
         print(txt[:80])
-    except RuntimeError as e:
+        print('-------------------')
+    except Exception as e:
         txt = ''
         logging.error("Exception while extracting text from '%s'", file)
     return txt
 
 
-Document = namedtuple('Document', ['path', 'filename', 'content'])
-def text_extraction(file) -> Document:
-    txt = to_text(file)
-    base = filename_without_extension(file)
-    return Document(file, base, txt)
+def text_extraction(path) -> Document:
+    assert os.path.isfile(path)
+    filename = filename_without_extension(path)
+    txt = to_text(path)
+    return Document(path, filename, txt)
 
 
 def index(path, include_extensions) -> None:
@@ -171,18 +176,20 @@ def index(path, include_extensions) -> None:
         logging.error("Not a directory: '%s', skipping indexing", path)
         return
     desired_filetype = functools.partial(filetype_admissible, include_extensions)
-    index = Index({'provider':'sqlite', 'filename':'fusearch.db', 'create_db': True})
+    index = Index({
+        'provider':'sqlite',
+        'filename': os.path.join(path,'fusearch.db'),
+        'create_db': True
+    }, tokenizer=NLTKTokenizer())
     for file in filter(desired_filetype, file_generator(path)):
         document = text_extraction(file)
+        index.add_document(document)
 
 
 def fusearch_main(args) -> int:
     logging.info("reading config from %s", args.config)
     config = Config.from_file(args.config)
     logging.info("%s", config)
-    # print(index_file('/Users/pllarroy/docu/books/edward_tufte_the_visual_display_of_quantitative_information_second_edition_2001.pdf'))
-    # index_file('/Users/pllarroy/docu/arts_design/Colour Management - A Comprehensive Guide For Graphic Designers - 150Dpi.pdf')
-    # return
     for path in config.index_dirs:
         index(path, set(config.include_extensions))
 
