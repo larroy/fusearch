@@ -198,7 +198,7 @@ def index(path, include_extensions) -> None:
         progressbar.Bar(),
         ' (', progressbar.ETA(), ') ',
     ]
-    pbar = progressbar.ProgressBar(file_count, widgets=widgets)
+    pbar = progressbar.ProgressBar(max_value=file_count, widgets=widgets)
     files = filter(desired_filetype, file_generator(path))
     file_i = 0
     for file in files:
