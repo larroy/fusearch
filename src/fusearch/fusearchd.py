@@ -11,6 +11,7 @@ import yaml
 import textract
 import filetype
 import functools
+import progressbar
 from fusearch.index import Index
 from fusearch.model import Document
 from fusearch.nltk_tokenizer import NLTKTokenizer
@@ -176,14 +177,36 @@ def index(path, include_extensions) -> None:
         logging.error("Not a directory: '%s', skipping indexing", path)
         return
     desired_filetype = functools.partial(filetype_admissible, include_extensions)
+    logging.info("Indexing %s", path)
+    index_file = os.path.join(path, '.fusearch.db')
     index = Index({
         'provider':'sqlite',
-        'filename': os.path.join(path,'fusearch.db'),
+        'filename': index_file,
         'create_db': True
     }, tokenizer=NLTKTokenizer())
-    for file in filter(desired_filetype, file_generator(path)):
+    logging.info("index initialized (%s)", index_file)
+
+    logging.info("Calculating number of files to index...")
+    files = filter(desired_filetype, file_generator(path))
+    file_count = 0
+    for file in files:
+        file_count += 1
+    logging.info("%d files to process", file_count)
+
+    widgets = [
+        ' [', progressbar.Timer(), '] ',
+        progressbar.Bar(),
+        ' (', progressbar.ETA(), ') ',
+    ]
+    pbar = progressbar.ProgressBar(file_count, widgets=widgets)
+    files = filter(desired_filetype, file_generator(path))
+    file_i = 0
+    for file in files:
+        print('File {} of {}'.format(file_i, file_count))
         document = text_extraction(file)
         index.add_document(document)
+        pbar.update(file_i)
+        file_i += 1
 
 
 def fusearch_main(args) -> int:

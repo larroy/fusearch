@@ -2,11 +2,13 @@ from pony.orm import *
 from .tokenizer import Tokenizer
 from collections import defaultdict
 from .util import uniq
-import msgpack
 import math
 from .model import Result
+import msgpack
 import operator
+import logging
 
+# TODO add typing
 
 class Index:
     """Inverted index"""
@@ -37,7 +39,8 @@ class Index:
         self.Document = Document
         db.bind(**bindargs)
         db.generate_mapping(create_tables=True)
-        self.doc_count = 0
+        with db_session:
+            self.doc_count = self.Document.select().count()
 
     def add_document(self, document):
         tokens = self.tokenizer.tokenize(document.content)
@@ -76,15 +79,21 @@ class Index:
     def query(self, txt):
         """Given a query string, return a list of search results"""
         txt_tokens = uniq(self.tokenizer.tokenize(txt))
+        logging.debug("Query tokens: %s", txt_tokens)
         results = []
         with db_session:
             tokens = self.Token.select(lambda x: x.tok in txt_tokens)
             for token in tokens:
                 numdocs_t = len(token.documents)
+                logging.debug("token: %s in %d documents", token, numdocs_t)
                 for document in token.documents:
-                    tokfreq = msgpack.unpackb(document.tokfreq, raw=False)
+                    try:
+                        tokfreq = msgpack.unpackb(document.tokfreq, raw=False)
+                    except ValueError as e:
+                        logging.error("msgpack WTF?")
                     tok = token.tok
-                    tfidf = tokfreq[tok] * math.log(self.doc_count/numdocs_t) / len(tokfreq)
+                    numtok = 1 if len(tokfreq) == 0 else len(tokfreq)
+                    tfidf = tokfreq.get(tok, 0) * math.log(self.doc_count/numdocs_t) / numtok
                     results.append(
                         Result(
                             tok=tok,
