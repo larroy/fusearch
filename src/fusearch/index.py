@@ -3,10 +3,10 @@ from .tokenizer import Tokenizer
 from collections import defaultdict
 from .util import uniq
 import math
-from .model import Result
-import msgpack
+from .model import Result, Document
 import operator
 import logging
+import json
 
 # TODO add typing
 
@@ -42,7 +42,7 @@ class Index:
         with db_session:
             self.doc_count = self.Document.select().count()
 
-    def add_document(self, document):
+    def add_document(self, document: Document):
         tokens = self.tokenizer.tokenize(document.content)
         tokfreq = defaultdict(int)
         for tok in tokens:
@@ -52,7 +52,7 @@ class Index:
                 url=document.url,
                 filename=document.filename,
                 content=document.content,
-                tokfreq=msgpack.packb(tokfreq))
+                tokfreq=json.dumps(tokfreq).encode())
 
             for tok, freq in tokfreq.items():
                 token = self.Token.get(tok=tok)
@@ -88,9 +88,9 @@ class Index:
                 logging.debug("token: %s in %d documents", token, numdocs_t)
                 for document in token.documents:
                     try:
-                        tokfreq = msgpack.unpackb(document.tokfreq, raw=False)
-                    except ValueError as e:
-                        logging.error("msgpack WTF?")
+                        tokfreq = json.loads(document.tokfreq)
+                    except RuntimeError as e:
+                        logging.error("json.loads WTF?")
                     tok = token.tok
                     numtok = 1 if len(tokfreq) == 0 else len(tokfreq)
                     tfidf = tokfreq.get(tok, 0) * math.log(self.doc_count/numdocs_t) / numtok
