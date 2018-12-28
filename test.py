@@ -12,4 +12,4 @@ index = Index({
     'filename': index_file,
     'create_db': True
 }, tokenizer=NLTKTokenizer())
-print(index.ranked(sys.argv[1]))
+print(index.document_from_url('/Users/pllarroy/docu/books/Ortografia.pdf'))

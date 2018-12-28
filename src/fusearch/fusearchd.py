@@ -24,7 +24,7 @@ def script_name() -> str:
 
 def config_logging() -> None:
     import time
-    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().setLevel(logging.DEBUG)
     logging.getLogger("requests").setLevel(logging.WARNING)
     logging.basicConfig(format='{}: %(asctime)sZ %(name)s %(levelname)s %(message)s'.
                         format(script_name()))
@@ -154,43 +154,73 @@ def to_text(file) -> None:
     try:
         txt_b = textract.process(file, method='pdftotext')
         # TODO more intelligent decoding? there be dragons
-        txt = txt_b.decode('utf-8')
-        print(file)
-        print(len(txt))
-        print(txt[:80])
-        print('-------------------')
+        if not isinstance(txt_b, (bytes, bytearray)):
+            logging.warning("%s %s", file, type(txt_b))
+        if isinstance(txt_b, (bytes, bytearray)):
+            txt = txt_b.decode()
+        elif isinstance(txt_b, str):
+            txt = txt_b
+        else:
+            raise RuntimeError("Unknown type on textract of %s", file)
+        #print(file)
+        #print(len(txt))
+        #print(txt[:80])
+        #print('-------------------')
     except Exception as e:
         txt = ''
-        logging.error("Exception while extracting text from '%s'", file)
+        logging.exception("Exception while extracting text from '%s'", file)
     return txt
 
 
-def text_extraction(path) -> Document:
-    assert os.path.isfile(path)
-    filename = filename_without_extension(path)
-    txt = to_text(path)
-    return Document(path, filename, txt)
+def text_extraction(url) -> Document:
+    assert os.path.isfile(url)
+    txt = to_text(url)
+    return txt
 
 
-def index(path, include_extensions) -> None:
+def mtime(url) -> int:
+    """return modification time as seconds since epoch"""
+    # TODO this can be made more generic if different protocols are supported, right now only works for local files
+    stat_result = os.stat(url)
+    return int(stat_result.st_mtime)
+
+def index_file(index, file) -> None:
+    mtime_latest = mtime(file)
+    document = index.document_from_url(file)
+    if not document or document and mtime_latest > document['mtime']:
+        txt = text_extraction(file)
+        document = Document(url=file, filename=filename_without_extension(file), content=txt, mtime=mtime_latest)
+        index.add_document(document)
+    else:
+        # Not changed
+        logging.debug("file %s hasn't changed", file)
+
+
+def index(path, config) -> None:
     if not os.path.isdir(path):
         logging.error("Not a directory: '%s', skipping indexing", path)
         return
-    desired_filetype = functools.partial(filetype_admissible, include_extensions)
+    desired_filetype = functools.partial(filetype_admissible, set(config.include_extensions))
     logging.info("Indexing %s", path)
-    index_file = os.path.join(path, '.fusearch.db')
+    index_db = os.path.join(path, '.fusearch.db')
     index = Index({
         'provider':'sqlite',
-        'filename': index_file,
+        'filename': index_db,
         'create_db': True
     }, tokenizer=NLTKTokenizer())
-    logging.info("index initialized (%s)", index_file)
+    logging.info("index initialized (%s)", index_db)
 
-    logging.info("Calculating number of files to index...")
+    logging.info("Calculating number of files to index (.=100files)")
     files = filter(desired_filetype, file_generator(path))
     file_count = 0
     for file in files:
         file_count += 1
+        if config.verbose and (file_count % 100) == 0:
+            sys.stdout.write('.')
+            sys.stdout.flush()
+    if config.verbose:
+        sys.stdout.write('\n')
+
     logging.info("%d files to process", file_count)
 
     widgets = [
@@ -202,9 +232,8 @@ def index(path, include_extensions) -> None:
     files = filter(desired_filetype, file_generator(path))
     file_i = 0
     for file in files:
-        print('File {} of {}'.format(file_i, file_count))
-        document = text_extraction(file)
-        index.add_document(document)
+        #print('File {} of {}'.format(file_i, file_count))
+        index_file(index, file)
         pbar.update(file_i)
         file_i += 1
 
@@ -214,7 +243,7 @@ def fusearch_main(args) -> int:
     config = Config.from_file(args.config)
     logging.info("%s", config)
     for path in config.index_dirs:
-        index(path, set(config.include_extensions))
+        index(path, config)
 
 
 def main() -> int:
