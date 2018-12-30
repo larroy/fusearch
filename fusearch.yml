@@ -1,0 +1,13 @@
+index_dirs: [/home/piotr/devel/fusearch/docu/]
+#parallel_extraction: false
+parallel_extraction: true
+verbose: true
+include_extensions:
+  - pdf
+  - chm
+  - txt
+  - html
+  - htm
+  - epub
+  - docx
+  - ps
