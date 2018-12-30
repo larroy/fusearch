@@ -8,6 +8,7 @@ import operator
 import logging
 import json
 import hashlib
+import typing
 
 # TODO add typing
 
@@ -29,11 +30,14 @@ class Index:
         #set_sql_debug(True)
 
         db = Database()
+        self.db = db
 
-        #@db.on_connect(provider='sqlite')
-        #def sqlite_sync_off(db, connection):
-        #    cursor = connection.cursor()
-        #    cursor.execute('PRAGMA synchronous = OFF')
+        @db.on_connect(provider='sqlite')
+        def sqlite_sync_off(db, connection):
+            cursor = connection.cursor()
+            cursor.execute('PRAGMA synchronous = OFF')
+            cursor.execute('PRAGMA cache_size = 64000')
+            cursor.execute('PRAGMA journal_mode = OFF')
 
         class Token(db.Entity):
             tok = Required(str, unique=True)
@@ -57,6 +61,16 @@ class Index:
         db.bind(**bindargs)
         db.generate_mapping(create_tables=True)
         self.update()
+
+    def mtime(self, url: str) -> typing.Optional[int]:
+        """:returns mtime of the given url or None if not found"""
+        url_sha = sha1_mem(url)
+        with db_session:
+            res = self.db.select('mtime FROM Document WHERE url_sha=$url_sha')
+        if res:
+            return res[0]
+        else:
+            return None
 
     def document_from_url(self, url: str) -> dict:
         """Raises ObjectNotFound when there's no such document or a dictionary with the Document entity when found"""
@@ -91,14 +105,6 @@ class Index:
                 else:
                     self.Token(tok=tok, doc_freq=freq, documents=doc)
         self.doc_count += 1
-
-    def query_token(self, token):
-        result = []
-        with db_session:
-            tok = self.Token.get(tok=token)
-            for doc in tok.documents:
-                result.append(doc.url)
-        return result
 
     def update(self):
         with db_session:

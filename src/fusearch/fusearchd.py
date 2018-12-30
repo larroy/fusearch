@@ -139,8 +139,9 @@ def document_from_file(file: str, tokenizer: Tokenizer) -> Document:
 
 def needs_indexing(index: Index, file: str) -> bool:
     mtime_latest = mtime(file)
-    document = index.document_from_url(file)
-    if not document or document and mtime_latest > document['mtime']:
+    #document = index.document_from_url(file)
+    mtime_last_known = index.mtime(file)
+    if not mtime_last_known or mtime_last_known and mtime_latest > mtime_last_known:
         #logging.debug("needs_indexing: need '%s'", file)
         return True
     else:
@@ -212,7 +213,7 @@ def document_consumer(path: str, config: Config, document_queue: Queue, file_cou
             index.add_document(doc)
             logging.debug("document_consumer(%d): added %s", os.getpid(), doc.url)
         except Exception as e:
-            logging.exception("index_serial: index.add_document exception. Document[%s]", doc.url)
+            logging.exception("document_consumer: index.add_document exception. Document[%s]", doc.url)
         if config.verbose:
             pbar.update(file_i)
         file_i += 1

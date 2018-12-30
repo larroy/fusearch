@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from config import Config
+from fusearch.config import Config
 from collections import defaultdict
 
 def get_tokenizer(config: Config):

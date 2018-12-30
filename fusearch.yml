@@ -1,6 +1,8 @@
-index_dirs: [/home/piotr/devel/fusearch/docu/]
-#parallel_extraction: false
-parallel_extraction: true
+#index_dirs: [/home/piotr/devel/fusearch/docu/]
+#index_dirs: [/tmp/programming]
+index_dirs: [/tmp/kkita]
+parallel_extraction: false
+#parallel_extraction: true
 verbose: true
 include_extensions:
   - pdf

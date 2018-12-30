@@ -85,3 +85,5 @@ def pickle_loader(f: io.IOBase) -> Generator:
         pass
 
 
+def compose(*functions):
+    return functools.reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
