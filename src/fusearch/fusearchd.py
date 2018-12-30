@@ -22,8 +22,9 @@ from config import Config
 
 progressbar_index_widgets_ = [
     ' [',
-        progressbar.Timer(format='Elapsed %(elapsed)s'), ' ',
-        'count: ', progressbar.Counter(),
+        progressbar.Timer(format='Elapsed %(elapsed)s'), ', ',
+        progressbar.SimpleProgress(), ' files'
+        #'count: ', progressbar.Counter(),
     '] ',
     progressbar.Bar(),
     ' (', progressbar.ETA(), ') ',
@@ -268,14 +269,11 @@ def index_parallel(path, config, file_count) -> None:
     document_consumer_proc = Process(name='document consumer', target=document_consumer, daemon=True,
                                      args=(path, config, document_queue, file_count))
 
-    print('a')
     for i in range(cpu_count()):
         p = Process(name='text extractor {}'.format(i), target=text_extract, daemon=True,
                     args=(config, file_queue, document_queue))
         text_extract_procs.append(p)
-        print('d')
         p.start()
-    print('k')
     document_consumer_proc.start()
 
     logging.debug("process started")

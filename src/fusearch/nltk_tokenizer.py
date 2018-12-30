@@ -17,7 +17,6 @@ class NLTKTokenizer(tokenizer.Tokenizer):
         self.stopWords = set(stopwords.words('english'))
 
     def tokenize(self, x):
-
         toks = filter(lambda x: x and x not in self.stopWords,
             map(lambda x: re.sub("^'", '', x),
             map(lambda x: re.sub("'$", '', x),
