@@ -20,7 +20,14 @@ import collections.abc
 from util import *
 from config import Config
 
-
+progressbar_index_widgets_ = [
+    ' [',
+        progressbar.Timer(format='Elapsed %(elapsed)s'), ' ',
+        'count: ', progressbar.Counter(),
+    '] ',
+    progressbar.Bar(),
+    ' (', progressbar.ETA(), ') ',
+]
 
 def script_name() -> str:
     """:returns: script name with leading paths removed"""
@@ -123,16 +130,17 @@ def to_text(file: str) -> str:
     return txt
 
 
-def index_file(index, file, tokenizer) -> None:
+def document_from_file(file, tokenizer) -> Document:
     mtime_latest = mtime(file)
     txt = to_text(file)
+    # Detect language and check that the document makes sense, OCR returns garbage sometimes
     document = Document(
         url=file,
         filename=filename_without_extension(file),
         content=txt,
         tokfreq=tokfreq(tokenizer(txt)),
         mtime=mtime_latest)
-    index.add_document(document)
+    return document
 
 
 def needs_indexing(index: Index, file: str) -> bool:
@@ -189,27 +197,14 @@ def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
             logging.debug("text_extract is done", file)
             return
         #logging.debug("text_extract: %s", file)
-        txt = to_text(file)
-        mtime_latest = mtime(file)
-        document = Document(
-            url=file,
-            filename=filename_without_extension(file),
-            content=txt,
-            tokfreq=tokfreq(tokenizer(txt)),
-            mtime=mtime_latest)
-
+        document = document_from_file(file, tokenizer)
         document_queue.put(document)
 
 
 def document_consumer(path: str, config: Config, document_queue: Queue, file_count: int) -> None:
     index = get_index(path, config)
     if config.verbose:
-        widgets = [
-            ' [', progressbar.Timer(), '] ',
-            progressbar.Bar(),
-            ' (', progressbar.ETA(), ') ',
-        ]
-        pbar = progressbar.ProgressBar(max_value=file_count, widgets=widgets)
+        pbar = progressbar.ProgressBar(max_value=file_count, widgets=progressbar_index_widgets_)
     file_i = 0
     while True:
         doc = document_queue.get()
@@ -230,14 +225,25 @@ def count_files(path, config) -> int:
         return
     logging.info("Indexing %s", path)
     logging.info("Calculating number of files to index (.=100files)")
+    if config.verbose:
+        widgets = [
+            ' [',
+                progressbar.Timer(format='Elapsed %(elapsed)s'), ' ',
+                'count: ', progressbar.Counter(),
+            '] ',
+            progressbar.BouncingBar(),
+        ]
+        pbar = progressbar.ProgressBar(widgets=widgets)
     file_count = 0
     for file in NeedsIndexFileGenerator(path, config)():
         file_count += 1
-        if config.verbose and (file_count % 100) == 0:
-            sys.stdout.write('.')
-            sys.stdout.flush()
-    if config.verbose:
-        sys.stdout.write('\n')
+        #if config.verbose and (file_count % 100) == 0:
+        #    sys.stdout.write('.')
+        #    sys.stdout.flush()
+        if config.verbose:
+            pbar.update(file_count)
+    #if config.verbose:
+    #    sys.stdout.write('\n')
     return file_count
 
 def index_do(path, config) -> None:
@@ -281,17 +287,14 @@ def index_parallel(path, config, file_count) -> None:
     document_consumer_proc.join()
 
 def index_serial(path, config, file_count):
-    widgets = [
-        ' [', progressbar.Timer(), '] ',
-        progressbar.Bar(),
-        ' (', progressbar.ETA(), ') ',
-    ]
-    pbar = progressbar.ProgressBar(max_value=file_count, widgets=widgets)
+    pbar = progressbar.ProgressBar(max_value=file_count, widgets=progressbar_index_widgets_)
     file_i = 0
     tokenizer = get_tokenizer(config)
-    index = get_index(path, config)
-    for file in NeedsIndexFileGenerator(path, config)():
-        index_file(index, file, tokenizer)
+    logging.info("Indexing started")
+    files = NeedsIndexFileGenerator(path, config)
+    for file in files():
+        document = document_from_file(file, tokenizer)
+        files.index.add_document(document)
         pbar.update(file_i)
         file_i += 1
 
