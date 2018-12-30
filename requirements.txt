@@ -1,2 +1,4 @@
 pyaml
 filetype
+progressbar2
+pony

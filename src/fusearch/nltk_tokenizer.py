@@ -5,6 +5,7 @@ import nltk
 
 class NLTKTokenizer(Tokenizer):
     def __init__(self):
+        nltk.download('punkt')
         self.stemmer = PorterStemmer()
 
     def tokenize(self, x):
