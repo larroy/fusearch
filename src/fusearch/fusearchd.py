@@ -11,9 +11,12 @@ import yaml
 import textract
 import functools
 import progressbar
+import tempfile
+import pickle
+import io
 from fusearch.index import Index
 from fusearch.model import Document
-from tokenizer import get_tokenizer, tokfreq
+from tokenizer import get_tokenizer, tokfreq, Tokenizer
 from multiprocessing import Process, Queue, cpu_count
 import queue
 import collections.abc
@@ -102,7 +105,6 @@ def config_argparse() -> argparse.ArgumentParser:
     return parser
 
 
-
 def to_text(file: str) -> str:
     assert os.path.isfile(file)
     try:
@@ -116,16 +118,19 @@ def to_text(file: str) -> str:
     except Exception as e:
         txt = ''
         logging.exception("Exception while extracting text from '%s'", file)
+        # TODO mark it as failed instead of empty text
     return txt
 
 
-def document_from_file(file, tokenizer) -> Document:
+def document_from_file(file: str, tokenizer: Tokenizer) -> Document:
     mtime_latest = mtime(file)
-    txt = to_text(file)
+    filename = filename_without_extension(file)
+    txt = filename + '\n' + to_text(file)
     # Detect language and check that the document makes sense, OCR returns garbage sometimes
+    # TODO: add filename to content
     document = Document(
         url=file,
-        filename=filename_without_extension(file),
+        filename=filename,
         content=txt,
         tokfreq=tokfreq(tokenizer(txt)),
         mtime=mtime_latest)
@@ -168,24 +173,23 @@ class NeedsIndexFileGenerator(object):
         return filter(file_needs_indexing, file_generator_ext(self.path, self.config.include_extensions))
 
 
-def file_producer(path: str, config: Config, file_queue: Queue) -> None:
-    for file in NeedsIndexFileGenerator(path, config)():
+def file_producer(path: str, config: Config, file_queue: Queue, file_inventory: io.IOBase) -> None:
+    for file in pickle_loader(file_inventory):
         #logging.debug("file_producer: %s", file)
         file_queue.put(file)
-    logging.debug("file_producer is done", file)
-    file_queue.put(None)
+    logging.debug("file_producer is done")
 
 
 def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
     #logging.debug("text_extract started")
     tokenizer = get_tokenizer(config)
     while True:
-        #logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
         file = file_queue.get()
-        logging.debug("text_extract: '%s'", file)
         if file is None:
-            logging.debug("text_extract is done", file)
+            logging.debug("text_extract is done")
             return
+        logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
+        logging.debug("text_extract: '%s'", file)
         #logging.debug("text_extract: %s", file)
         document = document_from_file(file, tokenizer)
         document_queue.put(document)
@@ -198,18 +202,23 @@ def document_consumer(path: str, config: Config, document_queue: Queue, file_cou
     file_i = 0
     while True:
         doc = document_queue.get()
-        logging.debug("document_consumer: document_queue.qsize %d", document_queue.qsize())
+        logging.debug("document_consumer(%d): document_queue.qsize %d", os.getpid(), document_queue.qsize())
         if doc is None:
             logging.debug("Document consumer, no more elements in the queue")
+            if config.verbose:
+                pbar.finish()
             return
-        #logging.debug("document_consumer: add %s", doc.url)
-        index.add_document(doc)
-        #logging.debug("document_consumer: added %s", doc.url)
+        try:
+            index.add_document(doc)
+            logging.debug("document_consumer(%d): added %s", os.getpid(), doc.url)
+        except Exception as e:
+            logging.exception("index_serial: index.add_document exception. Document[%s]", doc.url)
         if config.verbose:
             pbar.update(file_i)
-            file_i += 1
+        file_i += 1
 
-def count_files(path, config) -> int:
+def gather_files(path, config, file_inventory) -> int:
+    """:returns file count"""
     if not os.path.isdir(path):
         logging.error("Not a directory: '%s', skipping indexing", path)
         return
@@ -226,6 +235,7 @@ def count_files(path, config) -> int:
         pbar = progressbar.ProgressBar(widgets=widgets)
     file_count = 0
     for file in NeedsIndexFileGenerator(path, config)():
+        pickle.dump(file, file_inventory)
         file_count += 1
         #if config.verbose and (file_count % 100) == 0:
         #    sys.stdout.write('.')
@@ -234,25 +244,31 @@ def count_files(path, config) -> int:
             pbar.update(file_count)
     #if config.verbose:
     #    sys.stdout.write('\n')
+    if config.verbose:
+        pbar.finish()
+    file_inventory.seek(0)
     return file_count
 
+
 def index_do(path, config) -> None:
-    file_count = count_files(path, config)
+    file_inventory = tempfile.TemporaryFile()
+    file_count = gather_files(path, config, file_inventory)
     logging.info("%d files to process", file_count)
     if config.parallel_extraction:
-        index_parallel(path, config, file_count)
+        index_parallel(path, config, file_count, file_inventory)
     else:
-        index_serial(path, config, file_count)
+        index_serial(path, config, file_count, file_inventory)
 
-def index_parallel(path, config, file_count) -> None:
+def index_parallel(path: str, config: Config, file_count: int, file_inventory) -> None:
     #
     # file_producer -> N * test_extract -> document_consumer
     #
+    # TODO: check that processes are alive to prevent deadlocks on exceptions in children
     file_queue = Queue(cpu_count()*8)
     document_queue = Queue(256)
     text_extract_procs = []
     file_producer_proc = Process(name='file producer', target=file_producer, daemon=True,
-                                 args=(path, config, file_queue))
+                                 args=(path, config, file_queue, file_inventory))
     file_producer_proc.start()
 
     document_consumer_proc = Process(name='document consumer', target=document_consumer, daemon=True,
@@ -265,24 +281,39 @@ def index_parallel(path, config, file_count) -> None:
         p.start()
     document_consumer_proc.start()
 
-    logging.debug("process started")
+    logging.debug("child processes started")
 
+    logging.debug("joining producer")
     file_producer_proc.join()
+    logging.debug("joining text_extract")
     for p in text_extract_procs:
+        file_queue.put(None)
+    for p in text_extract_procs:
+        logging.debug("joining text_extract %s", p)
         p.join()
+    document_queue.put(None)
+    logging.debug("joining document_consumer")
     document_consumer_proc.join()
+    logging.info("Parallel indexing finished")
 
-def index_serial(path, config, file_count):
-    pbar = progressbar.ProgressBar(max_value=file_count, widgets=progressbar_index_widgets_)
+def index_serial(path, config, file_count, file_inventory):
+    if config.verbose:
+        pbar = progressbar.ProgressBar(max_value=file_count, widgets=progressbar_index_widgets_)
     file_i = 0
     tokenizer = get_tokenizer(config)
     logging.info("Indexing started")
-    files = NeedsIndexFileGenerator(path, config)
-    for file in files():
-        document = document_from_file(file, tokenizer)
-        files.index.add_document(document)
-        pbar.update(file_i)
+    index = get_index(path, config)
+    for file in pickle_loader(file_inventory):
+        doc = document_from_file(file, tokenizer)
+        try:
+            index.add_document(doc)
+        except Exception as e:
+            logging.exception("index_serial: index.add_document exception. Document[%s]", doc.url)
+        if config.verbose:
+            pbar.update(file_i)
         file_i += 1
+    if config.verbose:
+        pbar.finish()
 
 
 def fusearch_main(args) -> int:

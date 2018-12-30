@@ -4,6 +4,8 @@ import collections.abc
 import os
 import filetype
 import functools
+import io
+import pickle
 
 
 def uniq(xs: List[Any]) -> List[Any]:
@@ -32,7 +34,7 @@ def filetype_admissible(include_extensions: set, file):
     return False
 
 
-def filename_without_extension(file):
+def filename_without_extension(file: str) -> str:
     _, fname = os.path.split(file)
     base, _ = os.path.splitext(fname)
     return base
@@ -73,5 +75,13 @@ def mtime(url) -> int:
     # TODO this can be made more generic if different protocols are supported, right now only works for local files
     stat_result = os.stat(url)
     return int(stat_result.st_mtime)
+
+
+def pickle_loader(f: io.IOBase) -> Generator:
+    try:
+        while True:
+            yield pickle.load(f)
+    except EOFError:
+        pass
 
 
