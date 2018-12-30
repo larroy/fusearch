@@ -1,11 +1,12 @@
-from .tokenizer import Tokenizer
+import tokenizer
 
 from nltk.stem import PorterStemmer
 import nltk
 
-class NLTKTokenizer(Tokenizer):
+nltk.download('punkt')
+
+class NLTKTokenizer(tokenizer.Tokenizer):
     def __init__(self):
-        nltk.download('punkt')
         self.stemmer = PorterStemmer()
 
     def tokenize(self, x):

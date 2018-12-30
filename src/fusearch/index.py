@@ -13,7 +13,7 @@ import hashlib
 
 def sha1_mem(x):
     if type(x) is str:
-        x = x.encode()
+        x = x.encode(errors='replace')
     ctx = hashlib.sha1()
     ctx.update(x)
     return ctx.hexdigest()
@@ -29,6 +29,11 @@ class Index:
         #set_sql_debug(True)
 
         db = Database()
+
+        #@db.on_connect(provider='sqlite')
+        #def sqlite_sync_off(db, connection):
+        #    cursor = connection.cursor()
+        #    cursor.execute('PRAGMA synchronous = OFF')
 
         class Token(db.Entity):
             tok = Required(str, unique=True)
@@ -53,8 +58,9 @@ class Index:
         db.generate_mapping(create_tables=True)
         self.update()
 
-    def document_from_url(self, url):
+    def document_from_url(self, url: str) -> dict:
         """Raises ObjectNotFound when there's no such document or a dictionary with the Document entity when found"""
+        url_sha = None
         url_sha = sha1_mem(url)
         with db_session:
             try:
@@ -64,10 +70,7 @@ class Index:
                 return None
 
     def add_document(self, document: Document):
-        tokens = self.tokenizer.tokenize(document.content)
-        tokfreq = defaultdict(int)
-        for tok in tokens:
-            tokfreq[tok] += 1
+        #tokens = self.tokenizer.tokenize(document.content)
         url_sha = sha1_mem(document.url)
         content_sha = sha1_mem(document.content)
         with db_session:
@@ -78,9 +81,9 @@ class Index:
                 mtime=document.mtime,
                 content=document.content,
                 content_sha=content_sha,
-                tokfreq=json.dumps(tokfreq).encode())
+                tokfreq=json.dumps(document.tokfreq).encode())
 
-            for tok, freq in tokfreq.items():
+            for tok, freq in document.tokfreq.items():
                 token = self.Token.get(tok=tok)
                 if token:
                     token.doc_freq += freq

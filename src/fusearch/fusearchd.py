@@ -1,4 +1,4 @@
-    #!/usr/bin/env python3
+#!/usr/bin/env python3
 
 """Fusearch daemon"""
 
@@ -9,12 +9,17 @@ import sys
 import logging
 import yaml
 import textract
-import filetype
 import functools
 import progressbar
 from fusearch.index import Index
 from fusearch.model import Document
-from fusearch.nltk_tokenizer import NLTKTokenizer
+from tokenizer import get_tokenizer, tokfreq
+from multiprocessing import Process, Queue, cpu_count
+import queue
+import collections.abc
+from util import *
+from config import Config
+
 
 
 def script_name() -> str:
@@ -91,26 +96,6 @@ def daemonize() -> None:
     fusearch_main()
 
 
-# FIXME lockfile
-
-
-class Config(object):
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-    @staticmethod
-    def from_file(conf_file):
-        assert os.path.isfile(conf_file)
-        with open(conf_file, 'r') as fd:
-            cfg = yaml.safe_load(fd.read())
-        if cfg:
-            return Config(**cfg)
-        return Config()
-
-    def __str__(self):
-        return self.__class__.__name__ + '(' + str(self.__dict__) + ')'
-
-
 def config_argparse() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="fusearch daemon", epilog="")
     parser.add_argument('-f', '--foreground', action='store_true',
@@ -121,53 +106,9 @@ def config_argparse() -> argparse.ArgumentParser:
     return parser
 
 
-def file_extension(filepath) -> str:
-    _, ext_ = os.path.splitext(filepath)
-    ext = ext_.lower()
-    return ext
 
-
-def filetype_admissible(include_extensions, file):
-    ext = file_extension(file)
-    if ext in include_extensions:
-        return True
-    else:
-        guess = filetype.guess(file)
-        if guess and guess.extension in include_extensions:
-            return True
-    return False
-
-
-def filename_without_extension(file):
-    _, fname = os.path.split(file)
-    base, _ = os.path.splitext(fname)
-    return base
-
-
-def file_generator(path):
-    for (dirpath, dirnames, files) in os.walk(path):
-        for file in files:
-            yield os.path.abspath(os.path.join(dirpath, file))
-
-
-def bytes_to_str(text):
-    import chardet
-    if isinstance(text, str):
-        return text
-    else:
-        try:
-            result = text.decode('utf-8')
-            return result
-        except UnicodeDecodeError as e:
-            logging.exception("UTF-8 decoding error")
-        try:
-            encoding = chardet.detect(text)
-            return text.decode(encoding['encoding'])
-        except UnicodeDecodeError as e:
-            logging.exception("%s decoding (chardet detected) error", encoding)
-            return u''
-
-def to_text(file) -> None:
+def to_text(file: str) -> str:
+    assert os.path.isfile(file)
     try:
         txt_b = textract.process(file, method='pdftotext')
         # TODO more intelligent decoding? there be dragons
@@ -182,67 +123,175 @@ def to_text(file) -> None:
     return txt
 
 
-def text_extraction(url) -> Document:
-    assert os.path.isfile(url)
-    txt = to_text(url)
-    return txt
+def index_file(index, file, tokenizer) -> None:
+    mtime_latest = mtime(file)
+    txt = to_text(file)
+    document = Document(
+        url=file,
+        filename=filename_without_extension(file),
+        content=txt,
+        tokfreq=tokfreq(tokenizer(txt)),
+        mtime=mtime_latest)
+    index.add_document(document)
 
 
-def mtime(url) -> int:
-    """return modification time as seconds since epoch"""
-    # TODO this can be made more generic if different protocols are supported, right now only works for local files
-    stat_result = os.stat(url)
-    return int(stat_result.st_mtime)
-
-def index_file(index, file) -> None:
+def needs_indexing(index: Index, file: str) -> bool:
     mtime_latest = mtime(file)
     document = index.document_from_url(file)
     if not document or document and mtime_latest > document['mtime']:
-        txt = text_extraction(file)
-        document = Document(url=file, filename=filename_without_extension(file), content=txt, mtime=mtime_latest)
-        index.add_document(document)
+        #logging.debug("needs_indexing: need '%s'", file)
+        return True
     else:
-        # Not changed
-        logging.debug("file %s hasn't changed", file)
+        #logging.debug("needs_indexing: NOT need '%s'", file)
+        return False
 
 
-def index(path, config) -> None:
-    if not os.path.isdir(path):
-        logging.error("Not a directory: '%s', skipping indexing", path)
-        return
-    desired_filetype = functools.partial(filetype_admissible, set(config.include_extensions))
-    logging.info("Indexing %s", path)
+def get_index(path: str, config: Config) -> Index:
     index_db = os.path.join(path, '.fusearch.db')
     index = Index({
         'provider':'sqlite',
         'filename': index_db,
         'create_db': True
-    }, tokenizer=NLTKTokenizer())
-    logging.info("index initialized (%s)", index_db)
+    }, tokenizer=get_tokenizer(config))
+    logging.debug("get_index: '%s' %d docs", index_db, index.doc_count)
+    return index
 
+
+class NeedsIndexFileGenerator(object):
+    def __init__(self, path, config):
+        self.path = path
+        self.config = config
+        self.index = get_index(path, config)
+        assert os.path.isdir(path)
+
+
+    def __call__(self) -> collections.abc.Iterable:
+        """:returns a generator of files which are updated from the mtime in the index"""
+        file_needs_indexing = functools.partial(needs_indexing, self.index)
+        return filter(file_needs_indexing, file_generator_ext(self.path, self.config.include_extensions))
+
+
+def file_producer(path: str, config: Config, file_queue: Queue) -> None:
+    for file in NeedsIndexFileGenerator(path, config)():
+        #logging.debug("file_producer: %s", file)
+        file_queue.put(file)
+    logging.debug("file_producer is done", file)
+    file_queue.put(None)
+
+
+def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
+    #logging.debug("text_extract started")
+    tokenizer = get_tokenizer(config)
+    while True:
+        logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
+        file = file_queue.get()
+        if file is None:
+            logging.debug("text_extract is done", file)
+            return
+        #logging.debug("text_extract: %s", file)
+        txt = to_text(file)
+        mtime_latest = mtime(file)
+        document = Document(
+            url=file,
+            filename=filename_without_extension(file),
+            content=txt,
+            tokfreq=tokfreq(tokenizer(txt)),
+            mtime=mtime_latest)
+
+        document_queue.put(document)
+
+
+def document_consumer(path: str, config: Config, document_queue: Queue, file_count: int) -> None:
+    index = get_index(path, config)
+    if config.verbose:
+        widgets = [
+            ' [', progressbar.Timer(), '] ',
+            progressbar.Bar(),
+            ' (', progressbar.ETA(), ') ',
+        ]
+        pbar = progressbar.ProgressBar(max_value=file_count, widgets=widgets)
+    file_i = 0
+    while True:
+        doc = document_queue.get()
+        logging.debug("document_consumer: document_queue.qsize %d", document_queue.qsize())
+        if doc is None:
+            logging.debug("Document consumer, no more elements in the queue")
+            return
+        logging.debug("document_consumer: add %s", doc.url)
+        index.add_document(doc)
+        logging.debug("document_consumer: added %s", doc.url)
+        if config.verbose:
+            pbar.update(file_i)
+            file_i += 1
+
+def count_files(path, config) -> int:
+    if not os.path.isdir(path):
+        logging.error("Not a directory: '%s', skipping indexing", path)
+        return
+    logging.info("Indexing %s", path)
     logging.info("Calculating number of files to index (.=100files)")
-    files = filter(desired_filetype, file_generator(path))
     file_count = 0
-    for file in files:
+    for file in NeedsIndexFileGenerator(path, config)():
         file_count += 1
         if config.verbose and (file_count % 100) == 0:
             sys.stdout.write('.')
             sys.stdout.flush()
     if config.verbose:
         sys.stdout.write('\n')
+    return file_count
 
+def index_do(path, config) -> None:
+    file_count = count_files(path, config)
     logging.info("%d files to process", file_count)
+    if config.parallel_extraction:
+        index_parallel(path, config, file_count)
+    else:
+        index_serial(path, config, file_count)
 
+def index_parallel(path, config, file_count) -> None:
+    QUEUE_MAXSIZE=cpu_count()*4
+    #
+    # file_producer -> N * test_extract -> document_consumer
+    #
+    file_queue = Queue(QUEUE_MAXSIZE)
+    document_queue = Queue(QUEUE_MAXSIZE)
+    text_extract_procs = []
+    file_producer_proc = Process(name='file producer', target=file_producer, daemon=True,
+                                 args=(path, config, file_queue))
+    file_producer_proc.start()
+
+    document_consumer_proc = Process(name='document consumer', target=document_consumer, daemon=True,
+                                     args=(path, config, document_queue, file_count))
+
+    print('a')
+    for i in range(cpu_count()):
+        p = Process(name='text extractor {}'.format(i), target=text_extract, daemon=True,
+                    args=(config, file_queue, document_queue))
+        text_extract_procs.append(p)
+        print('d')
+        p.start()
+    print('k')
+    document_consumer_proc.start()
+
+    logging.debug("process started")
+
+    file_producer_proc.join()
+    for p in text_extract_procs:
+        p.join()
+    document_consumer_proc.join()
+
+def index_serial(path, config, file_count):
     widgets = [
         ' [', progressbar.Timer(), '] ',
         progressbar.Bar(),
         ' (', progressbar.ETA(), ') ',
     ]
     pbar = progressbar.ProgressBar(max_value=file_count, widgets=widgets)
-    files = filter(desired_filetype, file_generator(path))
     file_i = 0
-    for file in files:
-        index_file(index, file)
+    tokenizer = get_tokenizer(config)
+    index = get_index(path, config)
+    for file in NeedsIndexFileGenerator(path, config)():
+        index_file(index, file, tokenizer)
         pbar.update(file_i)
         file_i += 1
 
@@ -252,7 +301,7 @@ def fusearch_main(args) -> int:
     config = Config.from_file(args.config)
     logging.info("%s", config)
     for path in config.index_dirs:
-        index(path, config)
+        index_do(path, config)
 
 
 def main() -> int:
