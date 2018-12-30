@@ -191,7 +191,7 @@ def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
     #logging.debug("text_extract started")
     tokenizer = get_tokenizer(config)
     while True:
-        logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
+        #logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
         file = file_queue.get()
         if file is None:
             logging.debug("text_extract is done", file)
@@ -212,9 +212,9 @@ def document_consumer(path: str, config: Config, document_queue: Queue, file_cou
         if doc is None:
             logging.debug("Document consumer, no more elements in the queue")
             return
-        logging.debug("document_consumer: add %s", doc.url)
+        #logging.debug("document_consumer: add %s", doc.url)
         index.add_document(doc)
-        logging.debug("document_consumer: added %s", doc.url)
+        #logging.debug("document_consumer: added %s", doc.url)
         if config.verbose:
             pbar.update(file_i)
             file_i += 1
@@ -255,12 +255,11 @@ def index_do(path, config) -> None:
         index_serial(path, config, file_count)
 
 def index_parallel(path, config, file_count) -> None:
-    QUEUE_MAXSIZE=cpu_count()*4
     #
     # file_producer -> N * test_extract -> document_consumer
     #
-    file_queue = Queue(QUEUE_MAXSIZE)
-    document_queue = Queue(QUEUE_MAXSIZE)
+    file_queue = Queue(cpu_count()*8)
+    document_queue = Queue(256)
     text_extract_procs = []
     file_producer_proc = Process(name='file producer', target=file_producer, daemon=True,
                                  args=(path, config, file_queue))
