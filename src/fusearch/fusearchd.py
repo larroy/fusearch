@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+    #!/usr/bin/env python3
 
 """Fusearch daemon"""
 
@@ -150,18 +150,28 @@ def file_generator(path):
             yield os.path.abspath(os.path.join(dirpath, file))
 
 
+def bytes_to_str(text):
+    import chardet
+    if isinstance(text, str):
+        return text
+    else:
+        try:
+            result = text.decode('utf-8')
+            return result
+        except UnicodeDecodeError as e:
+            logging.exception("UTF-8 decoding error")
+        try:
+            encoding = chardet.detect(text)
+            return text.decode(encoding['encoding'])
+        except UnicodeDecodeError as e:
+            logging.exception("%s decoding (chardet detected) error", encoding)
+            return u''
+
 def to_text(file) -> None:
     try:
         txt_b = textract.process(file, method='pdftotext')
         # TODO more intelligent decoding? there be dragons
-        if not isinstance(txt_b, (bytes, bytearray)):
-            logging.warning("%s %s", file, type(txt_b))
-        if isinstance(txt_b, (bytes, bytearray)):
-            txt = txt_b.decode()
-        elif isinstance(txt_b, str):
-            txt = txt_b
-        else:
-            raise RuntimeError("Unknown type on textract of %s", file)
+        txt = bytes_to_str(txt_b)
         #print(file)
         #print(len(txt))
         #print(txt[:80])
@@ -232,7 +242,6 @@ def index(path, config) -> None:
     files = filter(desired_filetype, file_generator(path))
     file_i = 0
     for file in files:
-        #print('File {} of {}'.format(file_i, file_count))
         index_file(index, file)
         pbar.update(file_i)
         file_i += 1
