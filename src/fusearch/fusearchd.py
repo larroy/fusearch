@@ -30,18 +30,6 @@ progressbar_index_widgets_ = [
     ' (', progressbar.ETA(), ') ',
 ]
 
-def script_name() -> str:
-    """:returns: script name with leading paths removed"""
-    return os.path.split(sys.argv[0])[1]
-
-
-def config_logging() -> None:
-    import time
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.getLogger("requests").setLevel(logging.WARNING)
-    logging.basicConfig(format='{}: %(asctime)sZ %(name)s %(levelname)s %(message)s'.
-                        format(script_name()))
-    logging.Formatter.converter = time.gmtime
 
 
 def cleanup() -> None:
@@ -194,6 +182,7 @@ def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
     while True:
         #logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
         file = file_queue.get()
+        logging.debug("text_extract: '%s'", file)
         if file is None:
             logging.debug("text_extract is done", file)
             return
@@ -302,6 +291,20 @@ def fusearch_main(args) -> int:
     logging.info("%s", config)
     for path in config.index_dirs:
         index_do(path, config)
+
+
+def script_name() -> str:
+    """:returns: script name with leading paths removed"""
+    return os.path.split(sys.argv[0])[1]
+
+
+def config_logging() -> None:
+    import time
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.basicConfig(format='{}: %(asctime)sZ %(name)s %(levelname)s %(message)s'.
+                        format(script_name()))
+    logging.Formatter.converter = time.gmtime
 
 
 def main() -> int:
