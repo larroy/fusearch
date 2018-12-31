@@ -10,6 +10,7 @@ import re
 from fusearch.util import compose
 
 nltk.download('punkt')
+from operator import methodcaller
 
 class NLTKTokenizer(tokenizer.Tokenizer):
     def __init__(self):
@@ -18,15 +19,21 @@ class NLTKTokenizer(tokenizer.Tokenizer):
         self.tok = RegexpTokenizer(r'[\w\']+')
         self.stopWords = set(stopwords.words('english'))
         self.substitutions = [
+            (re.compile("^'"), ''),
+            (re.compile("'$"), ''),
+            (re.compile("_+"), '_'),
+            (re.compile("_+$"), ''),
+            (re.compile("^_+"), '')
         ]
         self.token_normalize = compose(
-            lambda x: re.sub("^'", '', x),
-            lambda x: re.sub("'$", '', x),
-            lambda x: re.sub('_+', '_', x),
-            lambda x: re.sub('_+$', '', x),
-            lambda x: re.sub('^_+', '', x),
+            self.subst,
             lambda x: x.lower(),
         )
+
+    def subst(self, x):
+        for s in self.substitutions:
+            x = s[0].sub(s[1], x)
+        return x
 
     def tokenize(self, x):
         toks = map(self.stemmer.stem,
