@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 INSTALL_REQUIRES = ["textract", "nltk"]
 
-EXTRAS_REQUIRE = {"test": ["flake8", "black", "mock", "pre-commit", "pytest"]}
+EXTRAS_REQUIRE = {"test": ["flake8", "black", "mock", "pre-commit", "pytest", "nose"]}
 
 
 with open("README.md", "r") as f:
