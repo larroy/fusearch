@@ -2,7 +2,7 @@
 
 ![Python package](https://github.com/larroy/fusearch/workflows/Python%20package/badge.svg)
 ![https://pypi.python.org/pypi/fusearch](https://img.shields.io/badge/python-3.6+-blue.svg?style=flat)
-![https://twitter.com/plarroy](https://img.shields.io/twitter/follow/larroy.svg?style=social&label=Follow&maxAge=60)
+![https://twitter.com/plarroy](https://img.shields.io/twitter/follow/plarroy.svg?style=social&label=Follow&maxAge=60)
 
 A Python3, console based full-text search for document collections. It converts different types of
 documents such as PDF, word files etc to text and creates a simple inverted index for queries.
