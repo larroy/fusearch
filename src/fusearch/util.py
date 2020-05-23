@@ -1,5 +1,5 @@
 import logging
-from typing import *
+from typing import Any, Generator, List
 import collections.abc
 import os
 import filetype
@@ -16,6 +16,7 @@ def uniq(xs: List[Any]) -> List[Any]:
             result.append(x)
         seen.add(x)
     return result
+
 
 def file_extension(filepath) -> str:
     _, ext_ = os.path.splitext(filepath)
@@ -54,20 +55,21 @@ def file_generator_ext(path: str, extensions: list):
 
 def bytes_to_str(text):
     import chardet
+
     if isinstance(text, str):
         return text
     else:
         try:
-            result = text.decode('utf-8')
+            result = text.decode("utf-8")
             return result
         except UnicodeDecodeError as e:
             logging.exception("UTF-8 decoding error")
         try:
             encoding = chardet.detect(text)
-            return text.decode(encoding['encoding'])
+            return text.decode(encoding["encoding"])
         except UnicodeDecodeError as e:
             logging.exception("%s decoding (chardet detected) error", encoding)
-            return u''
+            return u""
 
 
 def mtime(url) -> int:

@@ -2,8 +2,10 @@ from abc import ABC, abstractmethod
 from fusearch.config import Config
 from collections import defaultdict
 
+
 def get_tokenizer(config: Config):
     from fusearch.nltk_tokenizer import NLTKTokenizer
+
     return NLTKTokenizer()
 
 

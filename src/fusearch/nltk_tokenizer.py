@@ -9,26 +9,28 @@ import re
 
 from fusearch.util import compose
 
-nltk.download('punkt')
-from operator import methodcaller
+nltk.download("punkt")
+
 
 class NLTKTokenizer(tokenizer.Tokenizer):
     def __init__(self):
         self.stemmer = PorterStemmer()
         # TODO: move to config
-        self.tok = RegexpTokenizer(r'[\w\']+')
-        self.stopWords = set(stopwords.words('english'))
+        self.tok = RegexpTokenizer(r"[\w\']+")
+        try:
+            self.stopWords = set(stopwords.words("english"))
+        except LookupError:
+            nltk.download("stopwords")
+        else:
+            self.stopWords = set(stopwords.words("english"))
         self.substitutions = [
-            (re.compile("^'"), ''),
-            (re.compile("'$"), ''),
-            (re.compile("_+"), '_'),
-            (re.compile("_+$"), ''),
-            (re.compile("^_+"), '')
+            (re.compile("^'"), ""),
+            (re.compile("'$"), ""),
+            (re.compile("_+"), "_"),
+            (re.compile("_+$"), ""),
+            (re.compile("^_+"), ""),
         ]
-        self.token_normalize = compose(
-            self.subst,
-            lambda x: x.lower(),
-        )
+        self.token_normalize = compose(self.subst, lambda x: x.lower(),)
 
     def subst(self, x):
         for s in self.substitutions:
@@ -36,11 +38,11 @@ class NLTKTokenizer(tokenizer.Tokenizer):
         return x
 
     def tokenize(self, x):
-        toks = map(self.stemmer.stem,
-            filter(lambda x: x and x not in self.stopWords,
-            filter(lambda x: set(x) != {'_'},
-            map(self.token_normalize, self.tok.tokenize(x)
-        ))))
+        toks = map(
+            self.stemmer.stem,
+            filter(
+                lambda x: x and x not in self.stopWords,
+                filter(lambda x: set(x) != {"_"}, map(self.token_normalize, self.tok.tokenize(x))),
+            ),
+        )
         return toks
-
-

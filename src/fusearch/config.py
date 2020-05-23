@@ -9,11 +9,11 @@ class Config(object):
     @staticmethod
     def from_file(conf_file):
         assert os.path.isfile(conf_file)
-        with open(conf_file, 'r') as fd:
+        with open(conf_file, "r") as fd:
             cfg = yaml.safe_load(fd.read())
         if cfg:
             return Config(**cfg)
         return Config()
 
     def __str__(self):
-        return self.__class__.__name__ + '(' + str(self.__dict__) + ')'
+        return self.__class__.__name__ + "(" + str(self.__dict__) + ")"

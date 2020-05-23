@@ -7,7 +7,6 @@ import os
 import signal
 import sys
 import logging
-import yaml
 import textract
 import functools
 import progressbar
@@ -16,23 +15,25 @@ import pickle
 import io
 from fusearch.index import Index
 from fusearch.model import Document
-from tokenizer import get_tokenizer, tokfreq, Tokenizer
+from fusearch.tokenizer import get_tokenizer, tokfreq, Tokenizer
+from fusearch.util import bytes_to_str, file_generator_ext, filename_without_extension, mtime, pickle_loader
+from fusearch.config import Config
 from multiprocessing import Process, Queue, cpu_count
-import queue
 import collections.abc
-from util import *
-from config import Config
 
 progressbar_index_widgets_ = [
-    ' [',
-        progressbar.Timer(format='Elapsed %(elapsed)s'), ', ',
-        progressbar.SimpleProgress(), ' files'
-        #'count: ', progressbar.Counter(),
-    '] ',
+    " [",
+    progressbar.Timer(format="Elapsed %(elapsed)s"),
+    ", ",
+    progressbar.SimpleProgress(),
+    " files"
+    #'count: ', progressbar.Counter(),
+    "] ",
     progressbar.Bar(),
-    ' (', progressbar.ETA(), ') ',
+    " (",
+    progressbar.ETA(),
+    ") ",
 ]
-
 
 
 def cleanup() -> None:
@@ -86,37 +87,34 @@ def daemonize() -> None:
     fork_exit_parent()
     os.setsid()
     fork_exit_parent()
-    os.chdir('/')
+    os.chdir("/")
     config_signal_handlers()
     os.umask(0o022)
     redirect_stream(sys.stdin, None)
-    redirect_stream(sys.stdout, open('/tmp/fusearch.out', 'a'))
-    redirect_stream(sys.stderr, open('/tmp/fusearch.err', 'a'))
+    redirect_stream(sys.stdout, open("/tmp/fusearch.out", "a"))
+    redirect_stream(sys.stderr, open("/tmp/fusearch.err", "a"))
     fusearch_main()
 
 
 def config_argparse() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="fusearch daemon", epilog="")
-    parser.add_argument('-f', '--foreground', action='store_true',
-                        help="Don't daemonize")
-    parser.add_argument('-c', '--config', type=str,
-                        default='/etc/fusearch/config.yaml',
-                        help="config file")
+    parser.add_argument("-f", "--foreground", action="store_true", help="Don't daemonize")
+    parser.add_argument("-c", "--config", type=str, default="/etc/fusearch/config.yaml", help="config file")
     return parser
 
 
 def to_text(file: str) -> str:
     assert os.path.isfile(file)
     try:
-        txt_b = textract.process(file, method='pdftotext')
+        txt_b = textract.process(file, method="pdftotext")
         # TODO more intelligent decoding? there be dragons
         txt = bytes_to_str(txt_b)
-        #print(file)
-        #print(len(txt))
-        #print(txt[:80])
-        #print('-------------------')
+        # print(file)
+        # print(len(txt))
+        # print(txt[:80])
+        # print('-------------------')
     except Exception as e:
-        txt = ''
+        txt = ""
         logging.exception("Exception while extracting text from '%s'", file)
         # TODO mark it as failed instead of empty text
     return txt
@@ -125,37 +123,28 @@ def to_text(file: str) -> str:
 def document_from_file(file: str, tokenizer: Tokenizer) -> Document:
     mtime_latest = mtime(file)
     filename = filename_without_extension(file)
-    txt = filename + '\n' + to_text(file)
+    txt = filename + "\n" + to_text(file)
     # Detect language and check that the document makes sense, OCR returns garbage sometimes
     # TODO: add filename to content
-    document = Document(
-        url=file,
-        filename=filename,
-        content=txt,
-        tokfreq=tokfreq(tokenizer(txt)),
-        mtime=mtime_latest)
+    document = Document(url=file, filename=filename, content=txt, tokfreq=tokfreq(tokenizer(txt)), mtime=mtime_latest)
     return document
 
 
 def needs_indexing(index: Index, file: str) -> bool:
     mtime_latest = mtime(file)
-    #document = index.document_from_url(file)
+    # document = index.document_from_url(file)
     mtime_last_known = index.mtime(file)
     if not mtime_last_known or mtime_last_known and mtime_latest > mtime_last_known:
-        #logging.debug("needs_indexing: need '%s'", file)
+        # logging.debug("needs_indexing: need '%s'", file)
         return True
     else:
-        #logging.debug("needs_indexing: NOT need '%s'", file)
+        # logging.debug("needs_indexing: NOT need '%s'", file)
         return False
 
 
 def get_index(path: str, config: Config) -> Index:
-    index_db = os.path.join(path, '.fusearch.db')
-    index = Index({
-        'provider':'sqlite',
-        'filename': index_db,
-        'create_db': True
-    }, tokenizer=get_tokenizer(config))
+    index_db = os.path.join(path, ".fusearch.db")
+    index = Index({"provider": "sqlite", "filename": index_db, "create_db": True}, tokenizer=get_tokenizer(config))
     logging.debug("get_index: '%s' %d docs", index_db, index.doc_count)
     return index
 
@@ -167,7 +156,6 @@ class NeedsIndexFileGenerator(object):
         self.index = get_index(path, config)
         assert os.path.isdir(path)
 
-
     def __call__(self) -> collections.abc.Iterable:
         """:returns a generator of files which are updated from the mtime in the index"""
         file_needs_indexing = functools.partial(needs_indexing, self.index)
@@ -176,22 +164,24 @@ class NeedsIndexFileGenerator(object):
 
 def file_producer(path: str, config: Config, file_queue: Queue, file_inventory: io.IOBase) -> None:
     for file in pickle_loader(file_inventory):
-        #logging.debug("file_producer: %s", file)
+        # logging.debug("file_producer: %s", file)
         file_queue.put(file)
     logging.debug("file_producer is done")
 
 
 def text_extract(config: Config, file_queue: Queue, document_queue: Queue):
-    #logging.debug("text_extract started")
+    # logging.debug("text_extract started")
     tokenizer = get_tokenizer(config)
     while True:
         file = file_queue.get()
         if file is None:
             logging.debug("text_extract is done")
             return
-        logging.debug("text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize())
+        logging.debug(
+            "text_extract: file_queue.qsize %d document_queue.qsize %d", file_queue.qsize(), document_queue.qsize()
+        )
         logging.debug("text_extract: '%s'", file)
-        #logging.debug("text_extract: %s", file)
+        # logging.debug("text_extract: %s", file)
         document = document_from_file(file, tokenizer)
         document_queue.put(document)
 
@@ -218,6 +208,7 @@ def document_consumer(path: str, config: Config, document_queue: Queue, file_cou
             pbar.update(file_i)
         file_i += 1
 
+
 def gather_files(path, config, file_inventory) -> int:
     """:returns file count"""
     if not os.path.isdir(path):
@@ -227,10 +218,12 @@ def gather_files(path, config, file_inventory) -> int:
     logging.info("Calculating number of files to index (.=100files)")
     if config.verbose:
         widgets = [
-            ' [',
-                progressbar.Timer(format='Elapsed %(elapsed)s'), ' ',
-                'count: ', progressbar.Counter(),
-            '] ',
+            " [",
+            progressbar.Timer(format="Elapsed %(elapsed)s"),
+            " ",
+            "count: ",
+            progressbar.Counter(),
+            "] ",
             progressbar.BouncingBar(),
         ]
         pbar = progressbar.ProgressBar(widgets=widgets)
@@ -238,12 +231,12 @@ def gather_files(path, config, file_inventory) -> int:
     for file in NeedsIndexFileGenerator(path, config)():
         pickle.dump(file, file_inventory)
         file_count += 1
-        #if config.verbose and (file_count % 100) == 0:
+        # if config.verbose and (file_count % 100) == 0:
         #    sys.stdout.write('.')
         #    sys.stdout.flush()
         if config.verbose:
             pbar.update(file_count)
-    #if config.verbose:
+    # if config.verbose:
     #    sys.stdout.write('\n')
     if config.verbose:
         pbar.finish()
@@ -260,24 +253,31 @@ def index_do(path, config) -> None:
     else:
         index_serial(path, config, file_count, file_inventory)
 
+
 def index_parallel(path: str, config: Config, file_count: int, file_inventory) -> None:
     #
     # file_producer -> N * test_extract -> document_consumer
     #
     # TODO: check that processes are alive to prevent deadlocks on exceptions in children
-    file_queue = Queue(cpu_count()*8)
+    file_queue = Queue(cpu_count() * 8)
     document_queue = Queue(256)
     text_extract_procs = []
-    file_producer_proc = Process(name='file producer', target=file_producer, daemon=True,
-                                 args=(path, config, file_queue, file_inventory))
+    file_producer_proc = Process(
+        name="file producer", target=file_producer, daemon=True, args=(path, config, file_queue, file_inventory)
+    )
     file_producer_proc.start()
 
-    document_consumer_proc = Process(name='document consumer', target=document_consumer, daemon=True,
-                                     args=(path, config, document_queue, file_count))
+    document_consumer_proc = Process(
+        name="document consumer", target=document_consumer, daemon=True, args=(path, config, document_queue, file_count)
+    )
 
     for i in range(cpu_count()):
-        p = Process(name='text extractor {}'.format(i), target=text_extract, daemon=True,
-                    args=(config, file_queue, document_queue))
+        p = Process(
+            name="text extractor {}".format(i),
+            target=text_extract,
+            daemon=True,
+            args=(config, file_queue, document_queue),
+        )
         text_extract_procs.append(p)
         p.start()
     document_consumer_proc.start()
@@ -296,6 +296,7 @@ def index_parallel(path: str, config: Config, file_count: int, file_inventory) -
     logging.debug("joining document_consumer")
     document_consumer_proc.join()
     logging.info("Parallel indexing finished")
+
 
 def index_serial(path, config, file_count, file_inventory):
     if config.verbose:
@@ -332,10 +333,10 @@ def script_name() -> str:
 
 def config_logging() -> None:
     import time
+
     logging.getLogger().setLevel(logging.DEBUG)
     logging.getLogger("requests").setLevel(logging.WARNING)
-    logging.basicConfig(format='{}: %(asctime)sZ %(name)s %(levelname)s %(message)s'.
-                        format(script_name()))
+    logging.basicConfig(format="{}: %(asctime)sZ %(name)s %(levelname)s %(message)s".format(script_name()))
     logging.Formatter.converter = time.gmtime
 
 
@@ -348,5 +349,5 @@ def main() -> int:
     fusearch_main(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

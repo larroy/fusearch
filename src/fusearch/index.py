@@ -1,4 +1,4 @@
-from pony.orm import *
+from pony.orm import Database, LongStr, ObjectNotFound, Optional, PrimaryKey, Required, Set, db_session
 from .tokenizer import Tokenizer
 from collections import defaultdict
 from .util import uniq
@@ -12,49 +12,51 @@ import typing
 
 # TODO add typing
 
+
 def sha1_mem(x):
     if type(x) is str:
-        x = x.encode(errors='replace')
+        x = x.encode(errors="replace")
     ctx = hashlib.sha1()
     ctx.update(x)
     return ctx.hexdigest()
 
+
 class Index:
     """Inverted index implemented with Pony ORM"""
+
     def __init__(self, bindargs, tokenizer: Tokenizer):
         """
         :param bindargs: pony bind args such as {'provider':'sqlite', 'filename':':memory:'}
         :param tokenizer: A class implementing :class:`tokenizer.Tokenizer`
         """
         self.tokenizer = tokenizer
-        #set_sql_debug(True)
+        # set_sql_debug(True)
 
         db = Database()
         self.db = db
 
-        @db.on_connect(provider='sqlite')
+        @db.on_connect(provider="sqlite")
         def sqlite_sync_off(db, connection):
             cursor = connection.cursor()
-            cursor.execute('PRAGMA synchronous = OFF')
-            cursor.execute('PRAGMA cache_size = 64000')
-            cursor.execute('PRAGMA journal_mode = OFF')
+            cursor.execute("PRAGMA synchronous = OFF")
+            cursor.execute("PRAGMA cache_size = 64000")
+            cursor.execute("PRAGMA journal_mode = OFF")
 
         class Token(db.Entity):
             tok = Required(str, unique=True)
             doc_freq = Required(int)
-            documents = Set('Document')
+            documents = Set("Document")
 
         class Document(db.Entity):
-            #url = pony.orm.core.Index(Required(str))
+            # url = pony.orm.core.Index(Required(str))
             url_sha = PrimaryKey(str)
             url = Required(str, unique=True)
             filename = Required(str)
             mtime = Required(int)
             content = Optional(LongStr)
             content_sha = Optional(str)
-            tokens = Set('Token')
+            tokens = Set("Token")
             tokfreq = Required(bytes)
-
 
         self.Token = Token
         self.Document = Document
@@ -66,7 +68,7 @@ class Index:
         """:returns mtime of the given url or None if not found"""
         url_sha = sha1_mem(url)
         with db_session:
-            res = self.db.select('mtime FROM Document WHERE url_sha=$url_sha')
+            res = self.db.select("mtime FROM Document WHERE url_sha=$url_sha")
         if res:
             return res[0]
         else:
@@ -84,7 +86,7 @@ class Index:
                 return None
 
     def add_document(self, document: Document):
-        #tokens = self.tokenizer.tokenize(document.content)
+        # tokens = self.tokenizer.tokenize(document.content)
         url_sha = sha1_mem(document.url)
         content_sha = sha1_mem(document.content)
         with db_session:
@@ -95,7 +97,8 @@ class Index:
                 mtime=document.mtime,
                 content=document.content,
                 content_sha=content_sha,
-                tokfreq=json.dumps(document.tokfreq).encode())
+                tokfreq=json.dumps(document.tokfreq).encode(),
+            )
 
             for tok, freq in document.tokfreq.items():
                 token = self.Token.get(tok=tok)
@@ -127,14 +130,8 @@ class Index:
                         logging.error("json.loads WTF?")
                     tok = token.tok
                     numtok = 1 if len(tokfreq) == 0 else len(tokfreq)
-                    tfidf = tokfreq.get(tok, 0) * math.log(self.doc_count/numdocs_t) / numtok
-                    results.append(
-                        Result(
-                            tok=tok,
-                            tfidf=tfidf,
-                            url=document.url
-                        )
-                    )
+                    tfidf = tokfreq.get(tok, 0) * math.log(self.doc_count / numdocs_t) / numtok
+                    results.append(Result(tok=tok, tfidf=tfidf, url=document.url))
         return results
 
     def rank(self, results):
@@ -144,9 +141,8 @@ class Index:
         for x in results:
             by_doc[x.url] += x.tfidf
         sorted_results = sorted(by_doc.items(), key=operator.itemgetter(1), reverse=True)
-        #urls = [x[0] for x in sorted_results]
+        # urls = [x[0] for x in sorted_results]
         return sorted_results
 
     def ranked(self, txt):
         return self.rank(self.query(txt))
-
