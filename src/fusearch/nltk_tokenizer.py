@@ -21,6 +21,7 @@ class NLTKTokenizer(tokenizer.Tokenizer):
             self.stopWords = set(stopwords.words("english"))
         except LookupError:
             nltk.download("stopwords")
+            self.stopWords = set(stopwords.words("english"))
         else:
             self.stopWords = set(stopwords.words("english"))
         self.substitutions = [
